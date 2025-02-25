@@ -1,6 +1,8 @@
 import matplotlib.pyplot as plt
 from math import log2
 
+import numpy as np
+
 def plot_probs(probs, top_k=10):
     # Sort tokens by probability descending
     sorted_items = sorted(probs.items(), key=lambda x: x[1], reverse=True)
@@ -96,3 +98,55 @@ def autoregressive_byte_analysis(base_text, distribution_func, target_word=" dog
     plt.show()
 
     return results
+
+
+import matplotlib.pyplot as plt
+import numpy as np
+
+# analyse the results of an autoregressive byte analysis
+def sentence_information_visualization(text,results):
+
+    # Data from results (assumes results is defined)
+    positions = [r['position'] for r in results]
+    entropies = [r['entropy'] for r in results]
+    surprises = [r['surprise'] for r in results]
+
+
+
+    # Create 2D arrays of shape (1, N) for imshow for entropy and surprise
+    entropy_array = np.array(entropies).reshape(1, -1)
+    surprise_array = np.array(surprises).reshape(1, -1)
+
+    # Create labels for each byte position (assumes text is defined)
+    labels = [text[i-1] for i in positions]
+
+    # Set up the subplots: one for entropy, one for surprise, and one for the combined derivative/surprise plot
+    fig, (ax1, ax2, ax3) = plt.subplots(3, 1, figsize=(12, 10))
+
+    # Plot entropy as a colorbar-like image
+    im1 = ax1.imshow(entropy_array, aspect="auto", cmap="RdYlGn_r")
+    ax1.set_title("Entropy per Byte")
+    ax1.set_yticks([])  # Remove y-axis ticks
+    ax1.set_xticks(np.arange(len(positions)))
+    ax1.set_xticklabels(labels)
+
+    # Plot surprise as a colorbar-like image
+    im2 = ax2.imshow(surprise_array, aspect="auto", cmap="RdYlGn_r")
+    ax2.set_title("Surprise per Byte")
+    ax2.set_yticks([])
+    ax2.set_xticks(np.arange(len(positions)))
+    ax2.set_xticklabels(labels)
+
+    # Plot the ration of entropy over surprise as a curve
+    derivative = np.array(entropies) / np.array(surprises)
+    ax3.plot(positions, derivative, 'b-', marker='o')
+    ax3.set_title("Entropy / Surprise Ratio")
+    ax3.set_xlabel("Position in Word")
+    ax3.set_ylabel("Ratio")
+    ax3.set_xticks(positions)
+    ax3.set_xticklabels(labels)
+
+
+    plt.tight_layout()
+    plt.show()
+
