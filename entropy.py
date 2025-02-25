@@ -1,135 +1,131 @@
-import logging
-from math import *
-
-from transformers import AutoModelForCausalLM, AutoTokenizer
-import torch.nn.functional as F
 import torch
+import numpy as np
+from math import log2
+import logging
+from transformers import AutoTokenizer, AutoModelForCausalLM, T5Tokenizer, T5ForConditionalGeneration
 
-# Configure basic logging
-logging.basicConfig(level=logging.DEBUG, format='%(asctime)s - %(levelname)s - %(message)s')
+import probs.gpt2
+import probs.byt5
 
-model = None
-tokenizer = None
+class EntropyEstimator:
+    """Universal class for estimating entropy across different model types"""
 
-def next_word_distribution(tokenized_text):
-    """
-    Returns the probability distribution over the next word given some text.
-    """
-    global model, tokenizer
+    def __init__(self, model_name, level="token"):
+        """
+        Initialize entropy estimator
 
-    # Tokenized text logging
-    logging.debug(f"Tokenized context length: {len(tokenized_text)}")
+        Args:
+            model_name: HuggingFace model name
+            level: 'token' or 'byte' approach
+        """
+        self.level = level
 
-    # Get the model's output (we don't need gradients here)
-    with torch.no_grad():
-        input_tensor = torch.tensor(tokenized_text).unsqueeze(0)
-        logging.debug(f"Input tensor shape: {input_tensor.shape}")
-        outputs = model(input_ids=input_tensor)
-        logits = outputs.logits
-        logging.debug(f"Logits shape: {logits.shape}")
-
-    # Get the logits for the next token (last position)
-    next_token_logits = logits[0, -1, :]
-
-    # Apply temperature (if needed, add temperature scaling here)
-    next_token_logits = next_token_logits
-
-    # Convert to probabilities using softmax
-    probs = F.softmax(next_token_logits, dim=-1)
-
-    # Convert to numpy for easier handling
-    probs = probs.numpy()
-
-    # Debug: Log the maximum probability and its index
-    max_prob = probs.max()
-    max_idx = probs.argmax()
-    logging.debug(f"Max probability: {max_prob} at index: {max_idx}")
-
-
-
-    return probs
-
-# Example usage:
-def load_model(model_name="gpt2"):
-    """Loads model and tokenizer"""
-    global model, tokenizer
-    tokenizer = AutoTokenizer.from_pretrained(model_name)
-    model = AutoModelForCausalLM.from_pretrained(model_name)
-    logging.debug(f"Loaded model: {model_name}")
-
-
-def estimate_sequence_entropy(tokenized_text):
-    total_entropy = 0
-    context = []
-    for wt in tokenized_text:
-        context.append(wt)
-        probs = next_word_distribution(context)
-
-        top_k = 50
-        top_k_indices = probs.argsort()[-top_k:][::-1]
-        probs = probs[top_k_indices]
-
-        entropy_i = -sum(p * log2(p) for p in probs if p > 0)
-        total_entropy += entropy_i
-        logging.debug(f"Current context length: {len(context)}, entropy: {entropy_i}, total_entropy: {total_entropy}")
-
-    return total_entropy
-
-def estimate_token_entropy(tokenized_text, position):
-    context = tokenized_text[:position]
-    probs = next_word_distribution(context)
-    token_prob = probs[tokenized_text[position]]  # May need to adjust indexing
-    logging.debug(f"Entropy for token at position {position}: probability {token_prob}")
-    return -log2(token_prob)
-
-
-def cut_sentence_entropy(text, entropy_budget=1.0, entropy_chunks_num=None):
-
-    tokenized_text = tokenizer(text, return_tensors="pt")["input_ids"].squeeze().tolist()
-    logging.debug(f"Tokenized text: {tokenized_text}")
-    current_entropy = estimate_sequence_entropy(tokenized_text)
-    logging.debug(f"Total estimated sequence entropy: {current_entropy}")
-
-    if entropy_chunks_num:
-        entropy_budget = current_entropy / entropy_chunks_num
-
-    if current_entropy <= entropy_budget:
-        return text
-
-    # get the varentropy of each word
-    varentropies = []
-    for i in range(1,len(tokenized_text)):
-        logging.debug(f"Estimating entropy for token at position {i}")
-        varentropy = estimate_token_entropy(tokenized_text, i)
-        varentropies.append(varentropy)
-        logging.debug(f"Varentropy at position {i}: {varentropy}")
-
-    # make word groups that fits the best our budget
-    groups = []
-    group = []
-    group_entropy = 0
-    for i, varentropy in enumerate(varentropies):
-        if group_entropy + varentropy <= entropy_budget:
-            group.append(tokenized_text[i])
-            group_entropy += varentropy
+        if level == "token":
+            self.probablity_func = probs.gpt2.next_distribution
+        elif level == "byte":
+            self.probablity_func = probs.byt5.next_distribution
         else:
-            groups.append(group)
-            group = [tokenized_text[i]]
-            group_entropy = varentropy
-    if group:  # add any remaining group
-        groups.append(group)
+            raise ValueError("level must be 'token' or 'byte'")
 
-    # map the groups to text
-    text_groups = []
-    for group in groups:
-        text_group = tokenizer.decode(group)
-        text_groups.append(text_group)
+        self.model.eval()
+
+    def estimate_entropy(self, text, position):
+        """Estimate entropy at position in text"""
+        if self.level == "token":
+            return self._estimate_token_entropy(text, position)
+        else:
+            return self._estimate_byte_entropy(text, position)
+
+    def _estimate_token_entropy(self, text, position):
+        """Estimate entropy for token-based models"""
+        # Tokenize the whole text
+        tokens = self.tokenizer.encode(text)
+
+        # Find which token contains our position
+        token_spans = []
+        current_pos = 0
+        for token_id in tokens:
+            token_text = self.tokenizer.decode([token_id])
+            token_len = len(token_text)
+            token_spans.append((current_pos, current_pos + token_len, token_id))
+            current_pos += token_len
+
+        # Find which token contains our position
+        target_token = None
+        for start, end, token_id in token_spans:
+            if start <= position < end:
+                target_token = token_id
+                token_position = len([t for s, e, t in token_spans if s < start])
+                break
+
+        if target_token is None:
+            return 0  # Position is beyond text
+
+        # Get context (all tokens before our target token)
+        context_tokens = tokens[:token_position]
+        inputs = self.tokenizer(self.tokenizer.decode(context_tokens), return_tensors="pt")
+
+        # Convert logits to probabilities
+        probs = self.probablity_func(inputs)
+
+        # Get probability of the actual next token
+        token_prob = probs[target_token].item()
+
+        # Calculate entropy
+        if token_prob > 0:
+            entropy = -log2(token_prob)
+        else:
+            entropy = float('inf')
+
+        return entropy
+
+    def _estimate_byte_entropy(self, text, position):
+        """Estimate entropy for byte-based models"""
+        if position <= 0:
+            return 0
+
+        # Get context and target byte
+        context = text[:position]
+        target_byte = ord(text[position]) if position < len(text) else 0
 
 
-    return text_groups
+        probs = self.probablity_func(context)
 
-if __name__ == "__main__":
-    load_model("gpt2")
-    text = "The fundamental theorem of calculus elegantly connects differentiation and integration, yet xylophone narwhals quantum-fluctuate beneath cerulean crystalline structures while drinking coffee at Starbucks and checking their Instagram feed for the latest viral cat videos."
-    
-    print(cut_sentence_entropy(text, entropy_chunks_num=3))
+        # Get probability of the target byte
+        byte_prob = probs[target_byte].item()
+
+        # Calculate entropy
+        if byte_prob > 0:
+            entropy = -log2(byte_prob)
+        else:
+            entropy = float('inf')
+
+        return entropy
+
+    def calculate_text_entropy(self, text):
+        """Calculate entropy for entire text"""
+        total_entropy = 0
+        for pos in range(len(text)):
+            total_entropy += self.estimate_entropy(text, pos)
+        return total_entropy
+
+    def entropy_budget_segmentation(self, text, budget=10):
+        """Segment text into chunks of approximately equal entropy"""
+        segments = []
+        current_segment = ""
+        current_budget = 0
+
+        for i, char in enumerate(text):
+            entropy = self.estimate_entropy(text, i)
+            if current_budget + entropy > budget and current_segment:
+                segments.append(current_segment)
+                current_segment = char
+                current_budget = entropy
+            else:
+                current_segment += char
+                current_budget += entropy
+
+        if current_segment:
+            segments.append(current_segment)
+
+        return segments
