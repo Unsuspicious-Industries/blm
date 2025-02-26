@@ -18,7 +18,7 @@ def plot_probs(probs, top_k=10):
     plt.tight_layout()
     plt.show()
 
-def autoregressive_byte_analysis(base_text, distribution_func, target_word=" dog",):
+def autoregressive_byte_analysis(distribution_func, text):
     """
     Analyze byte-level probabilities and entropy for each position when generating a word
     Args:
@@ -26,14 +26,14 @@ def autoregressive_byte_analysis(base_text, distribution_func, target_word=" dog
         target_word: The word to analyze character by character
     """
     results = []
-    current_text = base_text
+    current_text = ""
 
-    print(f"Starting with: '{base_text}'")
-    print(f"Analyzing generation of: '{target_word}'")
+    print(f"Starting with: '{text}'")
+    print(f"Analyzing generation of: '{text}'")
     print("-" * 50)
 
     # For each character in the target word
-    for i, char in enumerate(target_word):
+    for i, char in enumerate(text):
         print(f"\nPosition {i+1}: Generating '{char}'")
 
         # Get byte value of the character
@@ -89,7 +89,7 @@ def autoregressive_byte_analysis(base_text, distribution_func, target_word=" dog
         plt.annotate(char, (positions[i], entropies[i]),
                     textcoords="offset points", xytext=(0,10), ha='center')
 
-    plt.title(f"Byte-level Entropy Analysis of '{target_word}'")
+    plt.title(f"Byte-level Entropy Analysis of '{text}'")
     plt.xlabel("Position in Word")
     plt.ylabel("Bits")
     plt.legend()

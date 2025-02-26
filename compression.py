@@ -1,92 +1,79 @@
+from decimal import Decimal, getcontext
+getcontext().prec = 200  # Increase precision as needed
+
 from probs.gpt2 import next_distribution
 
+def adjust_precision(text_length):
+    required = max(200, text_length * 10)
+    getcontext().prec = required
+
 def _distribution(context):
-    if context == "":
-        # return uniform probability for all bytes
-        probs = [1/256] * 256
-        # convert to dictionary
-        probs = dict(zip([chr(i) for i in range(256)],probs))
-        return probs
-
+    if len(context) == 0:
+        # return uniform probability for all bytes as Decimals (redundant but consistent)
+        probs = [Decimal(1) / Decimal(256)] * 256
+        return dict(zip(range(256), probs))
+    # convert context to string
+    context = "".join(chr(c) for c in context)
     probs = next_distribution(context)
-    # prob is a dictionary of byte:probability
-    # convert to dictionary of 'char':probability
-    probs = {chr(k):v for k,v in probs.items()}
-    return probs
+    # Convert probability floats to Decimal
+    return {k: Decimal(str(v)) for k, v in probs.items()}
 
-def _cumsum(id,dist):
-    P = sorted(dist.items(), key=lambda x: x[1], reverse=True)
-    cum = 0
+def _sorted_list_dist(dist):
+    return sorted(dist.items(), key=lambda x: x[0], reverse=True)
+
+def _cumsum(id, dist):
+    P = _sorted_list_dist(dist)
+    cum = Decimal(0)
     i = 0
     while P[i][0] != id:
         cum += P[i][1]
-        i+=1
+        i += 1
     return cum
 
-def _encode(text, pos=0, space=(0, 2**128)):
-    """
-    Arithmetic encoding using integer arithmetic to avoid floating-point precision issues.
-    """
+def _encode(text, pos=0, space=(Decimal(0), Decimal(1))):
     if pos >= len(text):
-        # Return a specific value from the final range (e.g., midpoint)
         low, high = space
-        return low + (high - low) // 2  # Return midpoint as a single value
+        result = (low, high)
+        return result
 
     low, high = space
-    range_size = high - low + 1  # +1 because we're using inclusive ranges
+    range_size = high - low  # now a Decimal between 0 and 1
 
     dist = _distribution(text[:pos])
     cum = _cumsum(text[pos], dist)
     p = dist[text[pos]]
 
-    # Convert floating-point probabilities to integer ranges
-    new_low = low + int(cum * range_size)
-    new_high = low + int((cum + p) * range_size) - 1  # -1 to keep ranges inclusive
+    # Update the new space without the integer conversion.
+    new_low = low + cum * range_size
+    new_high = low + (cum + p) * range_size
 
-    print(f'symbol: {text[pos]}, range: [{new_low}, {new_high}]')
-
-    # Detect potential underflow (when range gets too small)
     if new_high <= new_low:
-        print("WARNING: Integer precision limit reached! Increase bit width.")
+        print("WARNING: Insufficient precision in the range! Consider increasing getcontext().prec.")
 
-    return _encode(text, pos+1, (new_low, new_high))
+    print(f"Position {pos}: '{chr(text[pos])}' -> Range: ({new_low:.10f}, {new_high:.10f})")
 
-def _decode(encoded_value, length, text="", int_range=(0, 2**128)):
-    """
-    Arithmetic decoding using integer arithmetic to avoid floating-point precision issues.
-    """
+    return _encode(text, pos + 1, (new_low, new_high))
+
+def _decode(encoded_value, length, text=[], int_range=(Decimal(0), Decimal(1))):
     if length <= len(text):
-        print("returning size", length)
         return text
 
     low, high = int_range
-    range_size = high - low + 1
+    range_size = high - low
 
     dist = _distribution(text)
 
-    # Use integer arithmetic for scale calculations
-    # Instead of floating-point division, use scaled integers
-    PRECISION_SCALE = 10**100  # Large scaling factor to avoid precision loss
-
-    value_scaled = (encoded_value - low) * PRECISION_SCALE
-    range_scaled = range_size * PRECISION_SCALE
-
-    # Track cumulative probability
-    cum = 0
+    # With full Decimal precision, we can work directly in (0,1)
+    value_scaled = Decimal(encoded_value) - low
+    cum = Decimal(0)
     c = None
-    p = 0
+    p = Decimal(0)
 
-    sorted_dist = sorted(dist.items(), key=lambda x: x[1], reverse=True)
+    sorted_dist = _sorted_list_dist(dist)
     for symbol, prob in sorted_dist:
         next_cum = cum + prob
-
-        # Convert probability ranges to scaled integer bounds
-        lower_bound = int(cum * range_scaled) // PRECISION_SCALE
-        upper_bound = int(next_cum * range_scaled) // PRECISION_SCALE
-
-        if value_scaled >= lower_bound * PRECISION_SCALE and value_scaled < upper_bound * PRECISION_SCALE:
-            scale_value = value_scaled / range_scaled  # Only for display
-            print(f"{scale_value:.6f} in [{cum:.6f}, {next_cum:.6f})")
+        # Check whether the scaled value falls in the current cumulative interval.
+        if value_scaled >= cum and value_scaled < next_cum:
             c = symbol
             p = prob
             break
@@ -96,50 +83,49 @@ def _decode(encoded_value, length, text="", int_range=(0, 2**128)):
         print("Error: Could not find matching symbol!")
         return text
 
-    # Calculate bounds for this symbol in integer space
-    symbol_low = low + int(cum * range_size)
-    symbol_high = low + int((cum + p) * range_size) - 1
+    symbol_low = low + cum * range_size
+    symbol_high = low + (cum + p) * range_size
 
-    # Calculate the new value scaled back to the full range using INTEGER division
-    new_range_size = symbol_high - symbol_low + 1
-    # Use integer division to prevent floating-point errors
-    new_value = low + ((encoded_value - symbol_low) * range_size) // new_range_size
-
-    # Make sure the new value stays within our integer range
+    new_range_size = symbol_high - symbol_low
+    new_value = low + ((Decimal(encoded_value) - symbol_low) / new_range_size) * range_size
+    # Clamp new_value in [low, high]
     new_value = max(low, min(high, new_value))
 
-    print(f"Symbol: {c}, New value: {new_value}")
+    print(f"Position {len(text) + 1}: '{chr(c)}' -> Range: ({symbol_low:.10f}, {symbol_high:.10f})")
 
-    return _decode(new_value, length, text=text+c, int_range=int_range)
+    return _decode(new_value, length, text=text + [c], int_range=(low, high))
 
-buffer_size = 4
+buffer_size = 1  # remains unchanged
+# 'k' is no longer needed since we use (0, 1) directly.
 
-# Interface functions
 def encode(text):
-    # Add buffer padding to the end
-    text = text + " "*buffer_size
-    # Return a single value (not a range)
-    return _encode(text, space=(0, 2**(len(text)*8)))
+
+    # Adjust precision based on the length of the text. 
+    adjust_precision(len(text))
+
+    text = text + " " * buffer_size
+    text = [ord(c) for c in text]
+    # Use the (0,1) range directly.
+    encoded = _encode(text, space=(Decimal(0), Decimal(1)))
+    return encoded
 
 def decode(encoded_value, length):
-    # Add buffer to expected length
-    padded_length = length + buffer_size
-    # Decode with buffer
-    text = _decode(encoded_value, padded_length, int_range=(0, 2**(padded_length*8)))
-    # Remove buffer padding
-    return text[:-buffer_size]
 
+    # Adjust precision based on the length of the text.
+    adjust_precision(length)
+
+    padded_length = length + buffer_size
+    text = _decode(encoded_value, padded_length, int_range=(Decimal(0), Decimal(1)))
+    text = "".join(chr(c) for c in text)
+    result = text[:-buffer_size]
+    return result
 
 if __name__ == "__main__":
-    text = "My name is"
-
-    # Test through the interface functions
+    text = "My name is John Doe"
     encoded_value = encode(text)
     print(f"Encoded value: {encoded_value}")
-
     decoded_text = decode(encoded_value, len(text))
     print(f"Decoded text: {decoded_text}")
-
     if decoded_text == text:
         print("Test Passed!! ✨")
     else:

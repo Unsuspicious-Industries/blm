@@ -83,6 +83,11 @@ def next_distribution(text):
     if blg is None:
         load_model()
 
+    if len(text) == 0:
+        # return uniform probability for all bytes
+        probs = {i: 1 / 256 for i in range(256)}
+        return probs
+
     probs = blg.get_next_byte_distribution(text)
     return probs
 
