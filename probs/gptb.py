@@ -1,4 +1,5 @@
 import torch
+import torch.functional as F
 from transformers import PreTrainedModel, PretrainedConfig, GPT2LMHeadModel, GPT2Config
 from transformers import PreTrainedTokenizer
 
@@ -52,7 +53,11 @@ class GPTBForCausalLM(PreTrainedModel):
         # This ensures required parameters (like vocab_size) are set.
         gpt2_config = GPT2Config(**config.to_dict())
         self.model = GPT2LMHeadModel(gpt2_config)
-        self.model
+    
+    def from_pretrained(self, *args, **kwargs):
+        # Load the underlying GPT2 model from pre-trained weights.
+        self.model = self.model.from_pretrained(*args, **kwargs)
+        return self
 
     def forward(self, input_ids, labels=None, **kwargs):
         # Forward pass using the underlying GPT2 model.
@@ -72,6 +77,32 @@ class GPTBForCausalLM(PreTrainedModel):
     def decode_tokens(self, token_ids):
         tokens = [str(id) for id in token_ids]
         return self.tokenizer.convert_tokens_to_string(tokens)
+
+model = None
+tokenizer = None
+
+def load_model():
+    global model, tokenizer
+    # Load the model and tokenizer
+    model = GPTBForCausalLM(GPTBConfig())
+    model = model.from_pretrained("XXXX")
+    tokenizer = model.tokenizer
+
+def next_distribution(text):
+
+    global model, tokenizer
+
+    if len(text) == 0:
+        # return uniform distribution
+        return {i: 1/config.vocab_size for i in range(config.vocab_size)}
+
+    tokens = tokenizer(text)["input_ids"]
+    input_tensor = torch.tensor(tokens,requires_grad=False).unsqueeze(0)  
+    byte_probs = model(input_ids=input_tensor)
+    normalized_probs = F.softmax(byte_probs.logits[0, -1, :], dim=-1).detach().cpu().numpy()
+    return {i: p for i, p in enumerate(normalized_probs) if p > 0}
+
+
 
 
 if __name__ == "__main__":
