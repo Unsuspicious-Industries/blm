@@ -6,7 +6,7 @@ from transformers import GPT2LMHeadModel, GPT2Tokenizer
 import numpy as np
 
 class ByteLevelGPT2:
-    def __init__(self, model_name="gpt2"):
+    def __init__(self, model_name="gpt2-large"):
         self.tokenizer = GPT2Tokenizer.from_pretrained(model_name)
         self.model = GPT2LMHeadModel.from_pretrained(model_name)
         self.model.eval()
