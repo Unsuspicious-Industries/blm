@@ -69,7 +69,7 @@ class GPTBForCausalLM(PreTrainedModel):
 
     # Optional: add utility methods for encoding/decoding text.
     def encode_text(self, text):
-        tokens = self.tokenizer.tokenize(text)
+        tokens = self.tokenizer._tokenize(text)
         return torch.tensor(
             [self.tokenizer._convert_token_to_id(t) for t in tokens]
         ).unsqueeze(0)
@@ -78,31 +78,35 @@ class GPTBForCausalLM(PreTrainedModel):
         tokens = [str(id) for id in token_ids]
         return self.tokenizer.convert_tokens_to_string(tokens)
 
+model_path = "./gptb-model"
 model = None
 tokenizer = None
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
 
 def load_model():
-    global model, tokenizer
-    # Load the model and tokenizer
+    global model, tokenizer, device
+    # Load the model and tokenizer, then move the model to the appropriate device.
     model = GPTBForCausalLM(GPTBConfig())
-    model = model.from_pretrained("XXXX")
+    model = model.from_pretrained(model_path)
+    model.to(device)
     tokenizer = model.tokenizer
 
-def next_distribution(text):
 
-    global model, tokenizer
+def next_distribution(text):
+    global model, tokenizer, device
 
     if len(text) == 0:
         # return uniform distribution
-        return {i: 1/config.vocab_size for i in range(config.vocab_size)}
+        return {i: 1/model.config.vocab_size for i in range(model.config.vocab_size)}
 
-    tokens = tokenizer(text)["input_ids"]
-    input_tensor = torch.tensor(tokens,requires_grad=False).unsqueeze(0)  
+    # Convert text to tokens and then to a tensor, moving it to the correct device.
+    # Depending on your intended use, you might want to modify the tokenizer call.
+    tokens = tokenizer(text)["input_ids"] if hasattr(tokenizer, '__call__') else [int(b) for b in text.encode("utf-8")]
+    input_tensor = torch.tensor(tokens, requires_grad=False).unsqueeze(0).to(device)
     byte_probs = model(input_ids=input_tensor)
     normalized_probs = F.softmax(byte_probs.logits[0, -1, :], dim=-1).detach().cpu().numpy()
     return {i: p for i, p in enumerate(normalized_probs) if p > 0}
-
-
 
 
 if __name__ == "__main__":
@@ -110,9 +114,12 @@ if __name__ == "__main__":
     config = GPTBConfig()
     model = GPTBForCausalLM(config)
     
+    # Move model to device
+    model.to(device)
+    
     # Encode text using our custom method.
     input_text = "My name is"
-    input_ids = model.encode_text(input_text)
+    input_ids = model.encode_text(input_text).to(device)
     print(f"Input IDs: {input_ids}")
 
     # Get model outputs (loss will be computed if labels are provided).
