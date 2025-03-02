@@ -6,13 +6,14 @@ from transformers import GPT2LMHeadModel, GPT2Tokenizer
 import numpy as np
 
 class ByteLevelGPT2:
-    def __init__(self, model_name="gpt2-large"):
+    def __init__(self, model_name="gpt2"):
         self.tokenizer = GPT2Tokenizer.from_pretrained(model_name)
         self.model = GPT2LMHeadModel.from_pretrained(model_name)
         self.model.eval()
         
         # Set device to GPU if available
-        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        #self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        self.device = torch.device("cpu")
         self.model.to(self.device)
 
         # Map each byte to its token representation
@@ -69,19 +70,19 @@ class ByteLevelGPT2:
 
 blg = None
 
-def load_model():
+def load_model(model_name="gpt2"):
     global blg
-    blg = ByteLevelGPT2()
+    blg = ByteLevelGPT2(model_name=model_name)
 
 
-def next_distribution(text):
+def next_distribution(text,model_name="gpt2"):
     """
     Returns the probability distribution over the next byte given some text.
     """
     global blg
 
     if blg is None:
-        load_model()
+        load_model(model_name=model_name)
 
     if len(text) == 0:
         # return uniform probability for all bytes

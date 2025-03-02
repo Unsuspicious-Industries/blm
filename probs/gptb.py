@@ -54,10 +54,18 @@ class GPTBForCausalLM(PreTrainedModel):
         gpt2_config = GPT2Config(**config.to_dict())
         self.model = GPT2LMHeadModel(gpt2_config)
     
-    def from_pretrained(self, *args, **kwargs):
-        # Load the underlying GPT2 model from pre-trained weights.
-        self.model = self.model.from_pretrained(*args, **kwargs)
-        return self
+    @classmethod
+    def from_pretrained(cls, name_or_path, *model_args, **kwargs):
+        # Load the underlying GPT2LMHeadModel checkpoint.
+        gpt2_model = GPT2LMHeadModel.from_pretrained(name_or_path, *model_args, **kwargs)
+        # Build a GPTBConfig from the GPT2 model's configuration.
+        config = GPTBConfig(**gpt2_model.config.to_dict())
+        # Instantiate the GPTBForCausalLM model and assign the loaded GPT2 model.
+        instance = cls(config)
+        instance.model = gpt2_model
+        instance.tokenizer = ByteTokenizer()
+        return instance
+    
 
     def forward(self, input_ids, labels=None, **kwargs):
         # Forward pass using the underlying GPT2 model.
@@ -78,13 +86,12 @@ class GPTBForCausalLM(PreTrainedModel):
         tokens = [str(id) for id in token_ids]
         return self.tokenizer.convert_tokens_to_string(tokens)
 
-model_path = "./gptb-model"
 model = None
 tokenizer = None
-device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+#device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+device = torch.device("cpu")
 
-
-def load_model():
+def load_model(model_path="./gptb-model"):
     global model, tokenizer, device
     # Load the model and tokenizer, then move the model to the appropriate device.
     model = GPTBForCausalLM(GPTBConfig())
@@ -93,8 +100,11 @@ def load_model():
     tokenizer = model.tokenizer
 
 
-def next_distribution(text):
+def next_distribution(text,model_path="./gptb-model"):
     global model, tokenizer, device
+
+    if model is None:
+        load_model(model_path)
 
     if len(text) == 0:
         # return uniform distribution
@@ -105,7 +115,7 @@ def next_distribution(text):
     tokens = tokenizer(text)["input_ids"] if hasattr(tokenizer, '__call__') else [int(b) for b in text.encode("utf-8")]
     input_tensor = torch.tensor(tokens, requires_grad=False).unsqueeze(0).to(device)
     byte_probs = model(input_ids=input_tensor)
-    normalized_probs = F.softmax(byte_probs.logits[0, -1, :], dim=-1).detach().cpu().numpy()
+    normalized_probs = torch.softmax(byte_probs.logits[0, -1, :], dim=-1).detach().cpu().numpy()
     return {i: p for i, p in enumerate(normalized_probs) if p > 0}
 
 

@@ -1,7 +1,20 @@
 from decimal import Decimal, getcontext
 getcontext().prec = 200  # Increase precision as needed
 
-from probs.gpt2 import next_distribution
+from probs.gpt2 import next_distribution as dist_gpt2
+from probs.gptb import next_distribution as dist_gptb
+
+
+next_distribution = dist_gpt2  # or dist_gptb
+
+def set_distribution(distribution):
+
+    global next_distribution
+
+    if distribution == "gpt2":
+        next_distribution = dist_gpt2
+    elif distribution == "gptb":
+        next_distribution = dist_gptb
 
 def adjust_precision(text_length):
     required = max(200, text_length * 10)
