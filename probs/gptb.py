@@ -21,7 +21,7 @@ class ByteTokenizer(PreTrainedTokenizer):
         return str(index)
 
     def convert_tokens_to_string(self, tokens):
-        byte_values = [int(t) for t in tokens]
+        byte_values = [int(t) if (int(t) < 256 and int(t) >= 0) else 0 for t in tokens]
         return bytes(byte_values).decode("utf-8", errors="replace")
 
     @property
@@ -66,6 +66,9 @@ class GPTBForCausalLM(PreTrainedModel):
         instance.tokenizer = ByteTokenizer()
         return instance
     
+    def save_pretrained(self, save_directory,push_to_hub=False, **kwargs):
+        # Save the underlying GPT2 model with our custom config.
+        self.model.save_pretrained(save_directory,push_to_hub=push_to_hub, **kwargs)  
 
     def forward(self, input_ids, labels=None, **kwargs):
         # Forward pass using the underlying GPT2 model.
@@ -91,7 +94,7 @@ tokenizer = None
 #device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 device = torch.device("cpu")
 
-def load_model(model_path="./gptb-model"):
+def load_model(model_path="pkd/gptb"):
     global model, tokenizer, device
     # Load the model and tokenizer, then move the model to the appropriate device.
     model = GPTBForCausalLM(GPTBConfig())
@@ -100,7 +103,7 @@ def load_model(model_path="./gptb-model"):
     tokenizer = model.tokenizer
 
 
-def next_distribution(text,model_path="./gptb-model"):
+def next_distribution(text,model_path="pkd/gptb"):
     global model, tokenizer, device
 
     if model is None:
