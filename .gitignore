@@ -4,4 +4,5 @@ __pycache__
 models/*
 data/*
 gptb-model
-gptb
+gpt
+gpt.safetensors
